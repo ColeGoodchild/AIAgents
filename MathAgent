@@ -1,0 +1,77 @@
+import os
+from openai import OpenAI  # Or your preferred LLM provider
+
+# Initialize client
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+
+# 1. Define Tools
+def calculate_math(expression):
+    """Safely evaluates a basic mathematical expression."""
+    try:
+        return str(eval(expression, {"__builtins__": None}, {}))
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+TOOLS = {
+    "calculate": calculate_math
+}
+
+# 2. System Prompt to enforce the ReAct loop
+SYSTEM_PROMPT = """
+You are an autonomous AI agent. You have access to the following tools:
+- calculate: Takes a math expression string and evaluates it.
+
+You must operate in a loop of Thought, Action, and Observation.
+Format your responses exactly like this:
+Thought: [Your reasoning about what to do next]
+Action: [tool_name]: [argument]
+Observation: [The result returned by the tool]
+
+When you have the final answer, respond with:
+Final Answer: [Your final response]
+"""
+
+def run_agent(user_goal):
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": user_goal}
+    ]
+    
+    # Run the loop up to 5 times to prevent infinite loops
+    for i in range(5):
+        response = client.chat.completions.create(
+            model="gpt-4o",  # Use an agent-capable model
+            messages=messages
+        )
+        
+        content = response.choices[0].message.content
+        print(content)
+        messages.append({"role": "assistant", "content": content})
+        
+        # Check if the agent finished
+        if "Final Answer:" in content:
+            break
+            
+        # Parse the Action if the agent wants to use a tool
+        if "Action:" in content:
+            try:
+                # Extract tool name and argument
+                action_line = [line for line in content.split("\n") if "Action:" in line][0]
+                action_body = action_line.replace("Action:", "").strip()
+                tool_name, argument = action_body.split(":")
+                tool_name = tool_name.strip()
+                argument = argument.strip()
+                
+                # Execute the tool
+                if tool_name in TOOLS:
+                    observation = TOOLS[tool_name](argument)
+                else:
+                    observation = f"Error: Tool '{tool_name}' does not exist."
+                    
+                print(f"Observation: {observation}")
+                messages.append({"role": "user", "content": f"Observation: {observation}"})
+            except Exception:
+                messages.append({"role": "user", "content": "Observation: Failed to parse action formatting. Use 'Action: tool_name: argument'."})
+
+# Run the agent
+run_agent("What is 453 multiplied by 92, then divided by 4?")
